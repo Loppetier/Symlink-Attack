@@ -2,30 +2,341 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <title>Symlink-Abwehr-Präsentation</title>
+  <title>Abwehrmechanismen gegen Symlink-Attacken</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <!-- Reveal.js Core CSS -->
   <link rel="stylesheet" href="reveal.js/dist/reveal.css">
-  <link rel="stylesheet" href="reveal.js/dist/theme/black.css">
+  <link rel="stylesheet" href="reveal.js/dist/theme/moon.css" id="theme">
+
+  <!-- Highlight.js für Code-Syntax -->
+  <link rel="stylesheet" href="reveal.js/plugin/highlight/monokai.css">
+
+  <style>
+    /* Kleine Anpassungen */
+    .reveal section {
+      font-size: 1.2em;
+    }
+  </style>
 </head>
 <body>
+  <div class="reveal">
+    <div class="slides">
 
-<div class="reveal">
-  <div class="slides">
-    <section data-markdown="slides.md"
-             data-separator="^---$">
-    </section>
+      <!-- Titel -->
+      <section>
+        <h1>Abwehrmechanismen gegen Symlink-Attacken</h1>
+        <h3>RHEL-Systeme mit Dateiupload<br>Beispiel: LAMP-Setup</h3>
+        <p>Semih Loppetier</p>
+      </section>
+
+      <!-- Kontext -->
+      <section>
+        <h2>Kontext: LAMP unter RHEL</h2>
+        <ul>
+          <li>RHEL 8 / 9</li>
+          <li>Apache httpd</li>
+          <li>PHP (mod_php / php-fpm)</li>
+          <li>MySQL / MariaDB</li>
+        </ul>
+        <p>Typisch: webbasierte Dateiuploads, Schreibrechte für Apache/PHP, serverseitige Weiterverarbeitung</p>
+      </section>
+
+      <!-- Was ist eine Symlink-Attacke -->
+      <section>
+        <h2>Was ist eine Symlink-Attacke?</h2>
+        <ul>
+          <li>Symbolischer Link zeigt auf andere Datei</li>
+          <li>Anwendung folgt dem Link unbemerkt</li>
+          <li>Schreibzugriff landet im falschen Ziel</li>
+        </ul>
+        <strong>Folgen:</strong>
+        <ul>
+          <li>Überschreiben sensibler Dateien</li>
+          <li>Privilege Escalation</li>
+          <li>Denial of Service</li>
+        </ul>
+      </section>
+
+      <!-- Beispiel unsicherer Upload -->
+      <section>
+        <h2>Typisches LAMP-Upload-Beispiel (unsicher)</h2>
+        <pre><code class="language-php">
+move_uploaded_file(
+  $_FILES['file']['tmp_name'],
+  "/var/www/html/uploads/" . $_FILES['file']['name']
+);
+        </code></pre>
+        <ul>
+          <li>Keine Symlink-Prüfung</li>
+          <li>Upload im Webroot</li>
+          <li>Apache folgt Symlinks</li>
+        </ul>
+      </section>
+      <section>
+  <h2>LAMP Upload-Architektur</h2>
+
+  <svg width="800" height="420">
+    <!-- Browser -->
+    <rect x="20" y="150" width="140" height="60" fill="#4e88c7"/>
+    <text x="45" y="185" fill="white">Browser</text>
+
+    <!-- Apache -->
+    <rect x="220" y="80" width="180" height="70" fill="#6aa84f"/>
+    <text x="250" y="120" fill="white">Apache + PHP</text>
+
+    <!-- Upload Dir -->
+    <rect x="500" y="80" width="230" height="70" fill="#f1c232"/>
+    <text x="515" y="120">Upload-Verzeichnis</text>
+
+    <!-- Sensitive -->
+    <rect x="500" y="220" width="230" height="70" fill="#cc0000"/>
+    <text x="535" y="260" fill="white">/etc/passwd</text>
+
+    <!-- Arrows -->
+    <line x1="160" y1="180" x2="220" y2="115" stroke="white" stroke-width="2"/>
+    <line x1="400" y1="115" x2="500" y2="115" stroke="white" stroke-width="2"/>
+    <line x1="615" y1="150" x2="615" y2="220" stroke="white" stroke-width="2"/>
+
+    <text x="620" y="200" fill="white">Symlink</text>
+  </svg>
+
+  <p><small>Problem: Anwendung folgt Symlink → Schreiben ins falsche Ziel</small></p>
+</section>
+
+      <!-- Angriffsvoraussetzungen -->
+      <section>
+        <h2>Was braucht eine Angreifende Person?</h2>
+        <p><strong>Minimal:</strong></p>
+        <ul>
+          <li>Zugriff auf Upload-Funktion</li>
+          <li>Möglichkeit, Symlinks zu erzeugen</li>
+          <li>Fehlende serverseitige Prüfung</li>
+        </ul>
+        <p><strong>Optional:</strong></p>
+        <ul>
+          <li>Wissen über Pfade & Rechte</li>
+          <li>Race-Condition-Fenster</li>
+        </ul>
+        <p>➡ Kein Root-Zugriff notwendig</p>
+      </section>
+
+      <!-- Beispiel-Angriff -->
+      <section>
+        <h2>Beispiel-Angriff</h2>
+        <pre><code class="language-bash">
+ln -s /etc/passwd evil.jpg
+# Upload von evil.jpg
+# PHP schreibt Datei -> /etc/passwd überschrieben
+        </code></pre>
+      </section>
+
+      <section>
+  <h2>Angriff: ohne Schutz</h2>
+  <ul>
+    <li>Upload im Webroot</li>
+    <li>Apache folgt Symlinks</li>
+    <li>Kein PHP-Check</li>
+    <li>SELinux disabled</li>
+  </ul>
+  <p style="color:#ff6666">➡️ /etc/passwd überschreibbar</p>
+</section>
+
+<section>
+  <h2>Abwehr: Defense in Depth</h2>
+  <ul>
+    <li>Upload außerhalb Webroot</li>
+    <li>-FollowSymLinks</li>
+    <li>PHP: realpath + lstat</li>
+    <li>SELinux enforcing</li>
+  </ul>
+  <p style="color:#7CFC00">➡️ Angriff scheitert auf mehreren Ebenen</p>
+</section>
+
+      <!-- Abwehrprinzip -->
+      <section>
+        <h2>Abwehrprinzip: Defense in Depth</h2>
+        <ul>
+          <li>Anwendung</li>
+          <li>Webserver</li>
+          <li>Filesystem</li>
+          <li>Betriebssystem (SELinux)</li>
+        </ul>
+        <p>➡ Einzelmaßnahmen reichen nicht</p>
+      </section>
+
+      <!-- Abwehrmaßnahmen -->
+      <section>
+        <h2>Abwehrmaßnahmen</h2>
+        <ol>
+          <li>Upload außerhalb Webroot (/var/lib/app/uploads)</li>
+          <li>PHP-Side Checks: <code>is_link()</code>, <code>lstat()</code>, <code>realpath()</code></li>
+          <li>Apache Hardening: <code>Options -FollowSymLinks -ExecCGI</code></li>
+          <li>Filesystem Flags: <code>noexec,nodev,nosuid</code></li>
+          <li>SELinux enforcing: <code>httpd_sys_rw_content_t</code> für Upload-Ordner</li>
+        </ol>
+      </section>
+      <section>
+  <h2>Abwehr: Upload außerhalb des Webroots</h2>
+
+  <p><strong>Problem:</strong></p>
+  <ul>
+    <li>Uploads im Webroot sind direkt erreichbar</li>
+    <li>Symlinks können auf sensible Ziele zeigen</li>
+  </ul>
+
+  <p><strong>Lösung:</strong></p>
+  <pre><code class="language-bash">
+# unsicher
+/var/www/html/uploads
+
+# sicher
+/var/lib/app/uploads
+  </code></pre>
+
+  <ul>
+    <li>Keine direkte Auslieferung durch Apache</li>
+    <li>Klare Trennung: Code vs. Daten</li>
+    <li>Zugriff nur über kontrollierte PHP-Logik</li>
+  </ul>
+</section>
+<section>
+  <h2>Abwehr: PHP-Side Checks</h2>
+
+  <p><strong>Ziel:</strong> Nur echte, reguläre Dateien akzeptieren</p>
+
+  <pre><code class="language-php">
+$uploadDir = '/var/lib/app/uploads/';
+$target = $uploadDir . basename($_FILES['file']['name']);
+
+$real = realpath(dirname($target));
+
+if ($real === false || strpos($real, $uploadDir) !== 0) {
+  die("Ungültiger Pfad");
+}
+
+$stat = lstat($_FILES['file']['tmp_name']);
+if (($stat['mode'] & 0170000) === 0120000) {
+  die("Symlinks nicht erlaubt");
+}
+
+move_uploaded_file($_FILES['file']['tmp_name'], $target);
+  </code></pre>
+
+  <ul>
+    <li><code>is_link()</code> / <code>lstat()</code> → erkennt Symlinks</li>
+    <li><code>realpath()</code> → verhindert Pfad-Tricks</li>
+    <li>Zufällige Dateinamen empfohlen</li>
+  </ul>
+</section>
+<section>
+  <h2>Abwehr: Apache Hardening</h2>
+
+  <pre><code class="language-apache">
+<Directory "/var/lib/app/uploads">
+  Options -FollowSymLinks -ExecCGI
+  AllowOverride None
+</Directory>
+  </code></pre>
+
+  <ul>
+    <li><code>-FollowSymLinks</code> → Apache folgt keinen Symlinks</li>
+    <li><code>-ExecCGI</code> → keine Code-Ausführung</li>
+    <li><code>AllowOverride None</code> → .htaccess ignoriert</li>
+  </ul>
+
+  <p><strong>Effekt:</strong> Selbst bei App-Fehlern begrenzter Schaden</p>
+</section>
+<section>
+  <h2>Abwehr: Filesystem Flags</h2>
+
+  <pre><code class="language-bash">
+# /etc/fstab
+UUID=xxxx /var/lib/app/uploads ext4 \
+  noexec,nodev,nosuid 0 2
+  </code></pre>
+
+  <ul>
+    <li><code>noexec</code> → keine Binär-/Script-Ausführung</li>
+    <li><code>nodev</code> → keine Device-Files</li>
+    <li><code>nosuid</code> → keine Privileg-Eskalation</li>
+  </ul>
+
+  <p><strong>Wirkung:</strong> Schadensbegrenzung auf OS-Ebene</p>
+</section>
+
+      <section>
+  <h2>SELinux: Letzte Verteidigungslinie</h2>
+
+  <pre><code class="language-bash">
+# Upload-Ordner korrekt labeln
+semanage fcontext -a -t httpd_sys_rw_content_t "/var/lib/app/uploads(/.*)?"
+restorecon -Rv /var/lib/app/uploads
+  </code></pre>
+
+  <ul>
+    <li>Apache läuft im Typ <code>httpd_t</code></li>
+    <li>Zugriff auf <code>/etc</code> verboten</li>
+    <li>Symlink-Ziel außerhalb → Zugriff verweigert</li>
+  </ul>
+
+  <p><strong>Ergebnis:</strong> App-Bug vorhanden, Schaden begrenzt</p>
+</section>
+
+<section>
+  <h2>Defense in Depth – Uploads</h2>
+  <table>
+    <tr><th>Ebene</th><th>Maßnahme</th><th>Schutz</th></tr>
+    <tr><td>App</td><td>PHP Checks</td><td>Symlinks & Pfade</td></tr>
+    <tr><td>Webserver</td><td>-FollowSymLinks</td><td>Link-Following</td></tr>
+    <tr><td>Filesystem</td><td>noexec,nodev</td><td>Code-Ausführung</td></tr>
+    <tr><td>OS</td><td>SELinux</td><td>Pfad-/Typ-Zugriffe</td></tr>
+  </table>
+</section>
+
+      <!-- Aufwand vs Nutzen -->
+      <section>
+        <h2>Aufwand vs Nutzen</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Maßnahme</th><th>Aufwand</th><th>Nutzen</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Upload außerhalb Webroot</td><td>gering</td><td>hoch</td></tr>
+            <tr><td>PHP-Checks</td><td>mittel</td><td>sehr hoch</td></tr>
+            <tr><td>SELinux enforcing</td><td>mittel</td><td>sehr hoch</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Fazit -->
+      <section>
+        <h2>Fazit</h2>
+        <ul>
+          <li>Dateiuploads sind High Risk</li>
+          <li>Symlink-Attacken: einfach, effektiv, oft übersehen</li>
+          <li>RHEL bietet starke Bordmittel</li>
+          <li>Kombination App + OS + SELinux = entscheidend</li>
+        </ul>
+        <p>➡ Sicherheit beginnt beim Upload!</p>
+      </section>
+
+    </div>
   </div>
-</div>
 
-<script src="reveal.js/dist/reveal.js"></script>
-<script src="reveal.js/plugin/markdown/markdown.js"></script>
-
-<script>
-  Reveal.initialize({
-    hash: true,
-    plugins: [ RevealMarkdown ]
-  });
-</script>
-
+  <!-- Reveal.js -->
+  <script src="reveal.js/dist/reveal.js"></script>
+  <script src="reveal.js/plugin/markdown/markdown.js"></script>
+  <script src="reveal.js/plugin/highlight/highlight.js"></script>
+  <script src="reveal.js/plugin/notes/notes.js"></script>
+  <script>
+    Reveal.initialize({
+      hash: true,
+      slideNumber: true,
+      plugins: [ RevealMarkdown, RevealHighlight, RevealNotes ]
+    });
+  </script>
 </body>
 </html>
